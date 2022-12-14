@@ -57,6 +57,10 @@ class HyaraIDA(HyaraGUI):
     def get_md5(self) -> str:
         return idautils.GetInputFileMD5().hex()
 
+    def get_sha256(self) -> str:
+        raise NotImplementedError
+        return ''
+
     def get_imphash(self) -> str:
         return pefile.PE(self.get_filepath()).get_imphash()
 

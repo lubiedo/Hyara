@@ -61,6 +61,12 @@ class HyaraBinaryNinja(HyaraGUI):
             Transform["MD5"].encode(bv.file.raw.read(0, len(bv.file.raw)))
         ).decode()
 
+    def get_sha256(self) -> str:
+        bv = self.bv
+        return Transform["RawHex"].encode(
+            Transform["SHA256"].encode(bv.file.raw.read(0, len(bv.file.raw)))
+        ).decode()
+
     def get_imphash(self) -> str:
         return pefile.PE(self.get_filepath()).get_imphash()
 

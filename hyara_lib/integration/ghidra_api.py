@@ -59,6 +59,10 @@ class HyaraGhidra(HyaraGUI):
     def get_md5(self) -> str:
         return MD5Utilities.getMD5Hash(java.io.File(self.get_filepath()))
 
+    def get_sha256(self) -> str:
+        raise NotImplementedError
+        return ''
+
     def get_imphash(self) -> str:
         return pefile.PE(self.get_filepath()).get_imphash()
 

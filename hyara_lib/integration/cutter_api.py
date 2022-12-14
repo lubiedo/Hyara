@@ -39,6 +39,10 @@ class HyaraCutter(HyaraGUI):
     def get_md5(self) -> str:
         return cutter.cmdj("itj").get("md5", None)
 
+    def get_sha256(self) -> str:
+        raise NotImplementedError
+        return ''
+
     def get_imphash(self) -> str:
         return pefile.PE(self.get_filepath()).get_imphash()
 

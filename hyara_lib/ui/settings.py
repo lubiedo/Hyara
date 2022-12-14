@@ -1,4 +1,6 @@
+from string import Template
 from sys import modules
+from os import path, stat
 
 if "idaapi" in modules:
     # We are running inside IDA
@@ -192,6 +194,10 @@ class HyaraGUI(MainGUI):
         pass
 
     @abstractmethod
+    def get_sha256(self) -> str:
+        pass
+
+    @abstractmethod
     def get_imphash(self) -> str:
         pass
 
@@ -211,25 +217,56 @@ class HyaraGUI(MainGUI):
         return " ".join(data[i : i + 2] for i in range(0, len(data), 2)).upper()
 
     def get_comment(self, value):
+        comment = ''
         if value["type"] == "hex":
-            self.result += "      /*\n"
+            comment += "\t\t/*\n"
             for disasm, hex_value in zip(
                 self.get_disasm(int(value["start"], 16), int(value["end"], 16)),
                 self.get_comment_hex(int(value["start"], 16), int(value["end"], 16)),
             ):
                 mnemonic = disasm.split(" ")[0]
                 operend = " ".join(disasm.split(" ")[1:]).strip()
-                self.result += "          {:10}\t{:30}\t\t|{}\n".format(
+                comment += "\t\t\t{:10}\t{:30}\t\t|{}\n".format(
                     mnemonic, operend, hex_value.upper()
                 )
 
-            self.result += "      */\n"
+            comment += "\t\t*/\n"
+        return comment
 
     def get_rule_data(self, name, value):
         if value["type"] == "string":
-            self.result += "      $" + name + ' = "' + value["text"] + '" nocase wide ascii\n'
+            rule = "\t\t$" + name + ' = "' + value["text"] + '"'
+            start = int(value["start"], 16)
+            end = int(value["end"], 16)
+
+            if start+2 <= end:
+                data = self.get_hex(start, end)
+                wide = False
+
+                wide = (int(data[0:2], 16) > 0 and int(data[2:4], 16) == 0)
+                fullword = ((wide and data[-4:] == '0000') or (not wide and data[-2:] == '00'))
+                if fullword:
+                    rule += ' fullword'
+                if wide:
+                    rule += ' wide'
+            return rule
         else:
-            self.result += "      $" + name + " = {" + self.pretty_hex(value["text"]) + "}\n"
+            return "\t\t$" + name + " = { " + self.pretty_hex(value["text"]) + " }\n"
+    
+    def get_filesize(self, path):
+        st = stat(self.get_filepath())
+        size = st.st_size
+
+        power = 2**10
+        label = 0
+        labels = {0 : '', 1: 'KB', 2: 'MB', 3: 'GB', 4: 'TB', 5: 'PB'}
+        while size > power:
+            size /= power
+            label += 1
+
+        # add some padding to size
+        size *= 1.5
+        return '{}{}'.format(round(size), labels[label])
 
     def _make_hex_rule(self):
         self._result_plaintext.clear()
@@ -267,47 +304,46 @@ class HyaraGUI(MainGUI):
         self._ui_populate_table()
 
     def _yara_result(self) -> str:
-        self.result = 'import "hash"\n'
-        self.result += 'import "pe"\n\n'
-        self.result += "rule {} \n".format(self._variable_name.text())
-        self.result += "{\n"
-        self.result += "  meta:\n"
-        self.result += '      tool = "https://github.com/hyuunnn/Hyara"\n'
-        self.result += '      version = "2.3"\n'
-        self.result += '      date = "{}"\n'.format(time.strftime("%Y-%m-%d"))
-        self.result += '      MD5 = "{}"\n'.format(self.get_md5())
-        self.result += "  strings:\n"
+        self.result = rule = ''
+        with open(path.dirname(__file__) + '/rule.tpl', 'r') as fd:
+            rule = Template(fd.read())
 
+        rule_data = []
         for name, value in self.rule_list.items():
-
+            comment = ''
             if self._check_comment.isChecked():
-                self.get_comment(value)
+                comment = self.get_comment(value)
+            rule_data.append(comment + self.get_rule_data(name, value))
 
-            self.get_rule_data(name, value)
-
-        self.result += "  condition:\n"
-        self.result += "      all of them"
-
+        imports = []
+        conditions = ''
         try:
             # Check if opened file is a PE
             pefile.PE(self.get_filepath())
             if self._check_rich_header.isChecked():
-                self.result += (
-                    ' and hash.md5(pe.rich_signature.clear_data) == "'
-                    + self.get_rich_header()
-                    + '"'
-                )
+                conditions += 'and hash.md5(pe.rich_signature.clear_data) == "' + self.get_rich_header() + '"'
+                imports.append('hash')
 
             if self._check_imphash.isChecked():
-                self.result += ' and pe.imphash() == "' + self.get_imphash() + '"'
+                imports.append('pe')
+                conditions += 'and pe.imphash() == "' + self.get_imphash() + '"'
 
             if self._check_pdb_path.isChecked():
-                self.result += ' and pe.pdb_path == "' + self.get_pdb_path() + '"'
+                if not 'pe' in imports:
+                    imports.append('pe')
+                conditions += 'and pe.pdb_path == "' + self.get_pdb_path() + '"'
         except pefile.PEFormatError:
             # Not a PE file, continue
             pass
-
-        self.result += "\n}"
+        out = rule.substitute(name=self._variable_name.text(),
+            date=time.strftime("%Y-%m-%d"),
+            md5=self.get_md5(),
+            sha256=self.get_sha256(),
+            strings='\n'.join(rule_data),
+            imports='\n'.join(['import "{}"'.format(i) for i in imports]),
+            conditions=conditions,
+            size = self.get_filesize(self.get_filepath()))
+        self.result = out
         return self.result
 
     def _yara_export_rule(self):
